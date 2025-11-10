@@ -4,4 +4,6 @@ nltk
 Pillow
 scikit-image
 matplotlib
-fastapi uvicorn streamlit
+fastapi
+uvicorn
+streamlit
