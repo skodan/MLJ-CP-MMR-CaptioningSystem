@@ -6,18 +6,14 @@ import pickle
 from model import ImageEncoder, TextEncoder
 from dataloader import FlickrDataset, collate_fn
 
-def train_dual_encoder(train_csv, image_dir, vocab_path, output_path, num_epochs=5, batch_size=32, lr=1e-4):
+def train_dual_encoder(dataset, vocab_path, output_path, image_dir=None, mode="file", caption_field="caption_0", num_epochs=5, batch_size=32, lr=1e-4):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    df = pd.read_csv(train_csv)
-    with open(vocab_path, "rb") as f:
-        word2int, _ = pickle.load(f)
     
-    dataset = FlickrDataset(df, word2int, image_dir)
+    dataset = FlickrDataset(dataset, vocab_path=vocab_path, image_dir=image_dir, mode=mode, caption_field=caption_field)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
 
     image_encoder = ImageEncoder().to(device)
-    text_encoder = TextEncoder(vocab_size=len(word2int)).to(device)
+    text_encoder = TextEncoder(vocab_size=len(dataset.vocab)).to(device)
 
     params = list(text_encoder.parameters()) + list(image_encoder.fc.parameters())
     optimizer = torch.optim.Adam(params, lr=lr)

@@ -3,10 +3,13 @@ import pickle
 import numpy as np
 import faiss
 from pathlib import Path
+import re
+from collections import Counter
+from datasets import load_dataset
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 CSV_FILE = PROJECT_ROOT / "data" / "captions" / "flickr8k_train.csv"
-VOCAB_OUTPUT = PROJECT_ROOT / "data" / "processed" / "vocab.pkl"
+VOCAB_OUTPUT = PROJECT_ROOT / "data" / "captions" / "vocab.pkl"
 IMG_EMB_PATH = PROJECT_ROOT / "data" / "embeddings" / "flickr8k_train_image_embs.npy"
 TXT_EMB_PATH = PROJECT_ROOT / "data" / "embeddings" / "flickr8k_train_text_embs.npy"
 
@@ -35,6 +38,37 @@ def build_vocab(csv_path, output_path):
     print(f"Total tokens: {len(word2int)}")
 
 
+def tokenize(caption):
+    caption = caption.lower().strip()
+    caption = re.sub(r"[^\w\s]", "", caption)  # remove punctuation
+    return caption.split()
+
+
+def build_vocab_from_hf_dataset(train_ds, caption_field="caption_0"):
+    token_counter = Counter()
+    for example in train_ds:
+        tokens = tokenize(example[caption_field])
+        token_counter.update(tokens)
+
+    special_tokens = ["<pad>", "<sos>", "<eos>", "<unk>"]
+    unique_tokens = special_tokens + sorted(token_counter.keys())
+
+    word2int = {word: idx for idx, word in enumerate(unique_tokens)}
+    int2word = {idx: word for word, idx in word2int.items()}
+
+    vocab = {
+        "word2int": word2int,
+        "int2word": int2word,
+        "specials": special_tokens
+    }
+
+    with open(VOCAB_OUTPUT, "wb") as f:
+        pickle.dump(vocab, f)
+
+    print(f"Vocabulary size: {len(word2int)}")
+    return vocab
+
+
 def normalize(vectors):
     return vectors / np.linalg.norm(vectors, axis=1, keepdims=True)
 
@@ -55,7 +89,9 @@ def evaluate_recall_at_k(IMG_EMB_PATH, TXT_EMB_PATH, top_k=5):
 
 # Example usage
 if __name__ == "__main__":
-    build_vocab(
-        csv_path= CSV_FILE,
-        output_path= VOCAB_OUTPUT
-    )
+    # build_vocab(
+    #     csv_path= CSV_FILE,
+    #     output_path= VOCAB_OUTPUT
+    # )
+    ds = load_dataset("jxie/flickr8k")
+    vocab = build_vocab_from_hf_dataset(ds["train"])
