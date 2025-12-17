@@ -16,8 +16,8 @@ class ImageEncoder(nn.Module):
     def forward(self, images):
         with torch.no_grad():
             features = self.backbone(images).squeeze()
-            embeddings = self.fc(features)
-            return embeddings
+        embeddings = self.fc(features)
+        return embeddings
 
 
 class TextEncoder(nn.Module):

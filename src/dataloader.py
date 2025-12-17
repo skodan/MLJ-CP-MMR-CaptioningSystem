@@ -13,9 +13,20 @@ class FlickrDataset(Dataset):
         self.caption_field = caption_field
         self.mode = mode
 
+        # with open(vocab_path, "rb") as f:
+        #     vocab = pickle.load(f)
+        # self.vocab = vocab["word2int"]
+
         with open(vocab_path, "rb") as f:
             vocab = pickle.load(f)
-        self.vocab = vocab["word2int"]
+
+        # Support BOTH CSV (tuple) and HF (dict) vocab formats
+        if isinstance(vocab, tuple):
+            self.vocab = vocab[0]          # word2int
+        elif isinstance(vocab, dict):
+            self.vocab = vocab["word2int"]
+        else:
+            raise ValueError("Unsupported vocab format")
 
         self.transform = transform or transforms.Compose([
         transforms.Resize((224, 224)),
