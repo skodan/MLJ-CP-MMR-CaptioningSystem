@@ -1,23 +1,35 @@
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
-import pandas as pd
-import pickle
-from model import ImageEncoder, TextEncoder
-from dataloader import FlickrDataset, collate_fn
+from ret_model import ImageEncoder, TextEncoder
+from dataloader_hf import FlickrDataset, collate_fn
 
-def train_dual_encoder(dataset, vocab_path, output_path, image_dir=None, mode="file", caption_field="caption_0", num_epochs=5, batch_size=32, lr=1e-4):
+def contrastive_loss(im_emb, tex_emb, temperature=0.07):
+    # Calculate similarity matrix (Batch x Batch)
+    logits = (im_emb @ tex_emb.T) / temperature
+    
+    # Ground truth: the diagonal (image i matches text i)
+    labels = torch.arange(im_emb.size(0)).to(im_emb.device)
+    
+    # Symmetric loss: image-to-text and text-to-image
+    loss_i = nn.CrossEntropyLoss()(logits, labels)
+    loss_t = nn.CrossEntropyLoss()(logits.T, labels)
+    
+    return (loss_i + loss_t) / 2
+
+
+def train_dual_encoder_hf(dataset, vocab_path, output_path, caption_field="caption_0", num_epochs=5, batch_size=32, lr=1e-4):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
-    dataset = FlickrDataset(dataset, vocab_path=vocab_path, image_dir=image_dir, mode=mode, caption_field=caption_field)
+    dataset = FlickrDataset(dataset, vocab_path=vocab_path, caption_field=caption_field)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
 
     image_encoder = ImageEncoder().to(device)
-    text_encoder = TextEncoder(vocab_size=len(dataset.vocab)).to(device)
+    text_encoder = TextEncoder(vocab_size=len(dataset.word2int)).to(device)
 
     params = list(text_encoder.parameters()) + list(image_encoder.fc.parameters())
     optimizer = torch.optim.Adam(params, lr=lr)
-    criterion = nn.MSELoss()
+    #criterion = nn.MSELoss()
 
     for epoch in range(num_epochs):
         image_encoder.train()
@@ -29,7 +41,7 @@ def train_dual_encoder(dataset, vocab_path, output_path, image_dir=None, mode="f
             image_emb = image_encoder(images)
             text_emb = text_encoder(captions, lengths)
 
-            loss = criterion(image_emb, text_emb)
+            loss = contrastive_loss(image_emb, text_emb)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()

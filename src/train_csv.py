@@ -3,8 +3,23 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 import pandas as pd
 import pickle
-from model import ImageEncoder, TextEncoder
+from ret_model import ImageEncoder, TextEncoder
 from dataloader_csv import FlickrDataset, collate_fn
+
+
+def contrastive_loss(im_emb, tex_emb, temperature=0.07):
+    # Calculate similarity matrix (Batch x Batch)
+    logits = (im_emb @ tex_emb.T) / temperature
+    
+    # Ground truth: the diagonal (image i matches text i)
+    labels = torch.arange(im_emb.size(0)).to(im_emb.device)
+    
+    # Symmetric loss: image-to-text and text-to-image
+    loss_i = nn.CrossEntropyLoss()(logits, labels)
+    loss_t = nn.CrossEntropyLoss()(logits.T, labels)
+    
+    return (loss_i + loss_t) / 2
+
 
 def train_dual_encoder_csv(train_csv, image_dir, vocab_path, output_path, num_epochs=5, batch_size=32, lr=1e-4):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -21,7 +36,7 @@ def train_dual_encoder_csv(train_csv, image_dir, vocab_path, output_path, num_ep
 
     params = list(text_encoder.parameters()) + list(image_encoder.fc.parameters())
     optimizer = torch.optim.Adam(params, lr=lr)
-    criterion = nn.MSELoss()
+    #criterion = nn.MSELoss()
 
     for epoch in range(num_epochs):
         image_encoder.train()
@@ -33,7 +48,7 @@ def train_dual_encoder_csv(train_csv, image_dir, vocab_path, output_path, num_ep
             image_emb = image_encoder(images)
             text_emb = text_encoder(captions, lengths)
 
-            loss = criterion(image_emb, text_emb)
+            loss = contrastive_loss(image_emb, text_emb)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()

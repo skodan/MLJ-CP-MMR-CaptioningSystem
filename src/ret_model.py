@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torchvision.models as models
 from torchvision.models import resnet50, ResNet50_Weights
 
@@ -8,16 +9,19 @@ class ImageEncoder(nn.Module):
     def __init__(self, output_dim=512):
         super(ImageEncoder, self).__init__()
         resnet = resnet50(weights=ResNet50_Weights.DEFAULT)
-        modules = list(resnet.children())[:-1] # remove final fc layer
-        self.backbone = nn.Sequential(*modules)
+        self.backbone = nn.Sequential(*list(resnet.children())[:-1])
         self.fc = nn.Linear(resnet.fc.in_features, output_dim)
 
 
     def forward(self, images):
         with torch.no_grad():
-            features = self.backbone(images).squeeze()
+            #features = self.backbone(images).squeeze() - Need to know why .squeeze() was removed
+            features = self.backbone(images)
+        
+        features = features.flatten(1) # why flattening here?
         embeddings = self.fc(features)
-        return embeddings
+        #return embeddings # what difference between this and normalized embeddings?
+        return F.normalize(embeddings, p=2, dim=1)
 
 
 class TextEncoder(nn.Module):
@@ -33,4 +37,5 @@ class TextEncoder(nn.Module):
         packed = nn.utils.rnn.pack_padded_sequence(embedded, lengths, batch_first=True, enforce_sorted=False)
         _, (hidden, _) = self.lstm(packed)
         out = self.fc(hidden[-1])
-        return out
+        #return out # what difference between this and normalized out?
+        return F.normalize(out, p=2, dim=1)
