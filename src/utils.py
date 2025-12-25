@@ -16,6 +16,8 @@ from PIL import Image
 from transformers import CLIPModel, CLIPProcessor
 from tqdm import tqdm
 import ast
+import matplotlib.pyplot as plt
+import textwrap
 
 try:
     import faiss
@@ -24,20 +26,37 @@ except ImportError:
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-CSV_FILE = PROJECT_ROOT / "data" / "captions" / "flickr8k_train.csv"
-VOCAB_OUTPUT = PROJECT_ROOT / "data" / "captions" / "vocab.pkl"
-IMG_EMB_PATH = PROJECT_ROOT / "data" / "embeddings" / "flickr8k_train_image_embs.npy"
-TXT_EMB_PATH = PROJECT_ROOT / "data" / "embeddings" / "flickr8k_train_text_embs.npy"
-
 IMAGE_DIR = PROJECT_ROOT / "data" / "30k-images"
 ANNOTATION_CSV = PROJECT_ROOT / "data" / "annotations_30k.csv"
+CSV_FILE = PROJECT_ROOT / "data" / "captions" / "flickr8k_train.csv"
+
+VOCAB_OUTPUT = PROJECT_ROOT / "data" / "captions" / "vocab.pkl"
 OUTPUT_DIR = PROJECT_ROOT / "data" / "embeddings"
 
-# --- Configuration ---
+IMG_EMB_PATH = PROJECT_ROOT / "data" / "embeddings" / "30k_test" / "30k_hf_image_embeddings.npy"
+TXT_EMB_PATH = PROJECT_ROOT / "data" / "embeddings" / "30k_test" / "30k_hf_text_embeddings.npy"
+CAPTION_COUNTS_PATH = PROJECT_ROOT / "data" / "embeddings" / "train" / "train_hf-8k_caption_counts.npy"
+META_PATH = PROJECT_ROOT / "data" / "embeddings" / "30k_test" / "metadata.npy"
+
 REPO_ID = "nlphuji/flickr30k"
 REPO_TYPE = "dataset"
-LOCAL_DOWNLOAD_DIR = Path("./data/30k") 
+LOCAL_DOWNLOAD_DIR = Path("./data/30k")
 
+# load embeddings and caption counts
+image_embs = np.load(IMG_EMB_PATH)
+text_embs = np.load(TXT_EMB_PATH)
+#cnt = np.load(CAPTION_COUNTS_PATH)
+
+# image ids and text ids for HF 8k Flickr dataset
+#image_ids = list(range(len(image_embs)))
+
+# text_ids = []
+# for img_id, c in enumerate(cnt):
+#     text_ids.extend([img_id] * c)
+
+# image ids and text ids for HF 30k Flickr dataset
+metadata = np.load(META_PATH, allow_pickle=True)
+img_ids = [m["img_id"] for m in metadata]
 
 # Function to download the entire dataset snapshot from Hugging Face
 def download_hf_dataset(repo_id, repo_type, local_dir):
@@ -55,20 +74,7 @@ def download_hf_dataset(repo_id, repo_type, local_dir):
     print(f"Entire dataset snapshot is saved in: {local_path}")
 
 
-def generate_flickr30k_clip_embeddings(
-    image_dir,
-    annotation_csv,
-    output_dir,
-    batch_size=64
-):
-    """
-    Generate CLIP image & text embeddings for Flickr30k
-    using OFFICIAL train/val/test splits from annotations.
-
-    Expected CSV columns:
-    ['raw', 'sentids', 'split', 'filename', 'img_id']
-    """
-
+def generate_flickr30k_clip_embeddings(image_dir,annotation_csv,output_dir,batch_size=64):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"[CLIP] Using device: {device}")
 
@@ -175,7 +181,6 @@ def generate_flickr30k_clip_embeddings(
         print(f"[CLIP] Saved {split_name} embeddings → {split_dir}")
 
 
-
 def build_vocab(csv_path, output_path):
     df = pd.read_csv(csv_path)
     captions = df["caption"].tolist()
@@ -236,7 +241,7 @@ def normalize(vectors):
     return vectors / np.linalg.norm(vectors, axis=1, keepdims=True)
 
 
-def evaluate_recall_at_k(IMG_EMB_PATH, TXT_EMB_PATH, top_k=5):
+def evaluate_recall_at_k_text2image(IMG_EMB_PATH, TXT_EMB_PATH, top_k=5):
     image_embs = normalize(np.load(IMG_EMB_PATH))
     text_embs = normalize(np.load(TXT_EMB_PATH))
 
@@ -248,6 +253,28 @@ def evaluate_recall_at_k(IMG_EMB_PATH, TXT_EMB_PATH, top_k=5):
 
     recall_at_k = (correct_image_indices[:, None] == indices).any(axis=1).mean()
     print(f"Recall@{top_k}: {recall_at_k:.4f}")
+
+
+def evaluate_recall_at_k_generic(query_embs,db_embs,query_ids,db_ids,top_k=5):
+    query_embs = normalize(query_embs)
+    db_embs = normalize(db_embs)
+
+    index = faiss.IndexFlatIP(db_embs.shape[1])
+    index.add(db_embs)
+
+    _, retrieved_idx = index.search(query_embs, top_k)
+
+    hits = 0
+    for q_idx, neighbors in enumerate(retrieved_idx):
+        q_id = query_ids[q_idx]
+        retrieved_ids = [db_ids[i] for i in neighbors]
+
+        if q_id in retrieved_ids:
+            hits += 1
+
+    recall_at_k = hits / len(query_ids)
+    print(f"Recall@{top_k}: {recall_at_k:.4f}")
+    return recall_at_k
 
 
 def generate_caption(model,image,word2int,int2word,max_len=20,device=None):
@@ -313,8 +340,118 @@ def compute_metrics(reference, hypothesis):
     return bleu1, bleu4, rouge_l, wer_score
 
 
+def faiss_index_build(embeddings):
+    index = faiss.IndexFlatIP(embeddings.shape[1])
+    index.add(embeddings)
+    return index
+
+
+def show_unique_images_with_captions(indices, title, max_images=5, wrap_width=35):
+    seen = set()
+    unique_items = []
+
+    for idx in indices:
+        img_path = metadata[idx]["image_path"]
+        caption  = metadata[idx]["caption"]
+
+        if img_path not in seen:
+            seen.add(img_path)
+            unique_items.append((img_path, caption))
+
+        if len(unique_items) == max_images:
+            break
+
+    n = len(unique_items)
+    plt.figure(figsize=(4 * n, 5))
+
+    for i, (img_path, caption) in enumerate(unique_items):
+        plt.subplot(1, n, i + 1)
+        img = Image.open(img_path).convert("RGB")
+        plt.imshow(img)
+        plt.axis("off")
+
+        # Wrap caption so it fits nicely
+        wrapped_caption = "\n".join(textwrap.wrap(caption, wrap_width))
+        plt.title(wrapped_caption, fontsize=9)
+
+    plt.suptitle(title, fontsize=14)
+    plt.tight_layout()
+    plt.show()
+
+
+# def show_images(indices, title):
+#     plt.figure(figsize=(15, 3))
+#     for i, idx in enumerate(indices):
+#         plt.subplot(1, len(indices), i + 1)
+#         img = Image.open(metadata[idx]["image_path"]).convert("RGB")
+#         plt.imshow(img)
+#         plt.axis("off")
+#     plt.suptitle(title)
+#     plt.show()
+
+
+def text_to_image(query_idx, k=5):
+    query_text = metadata[query_idx]["caption"]
+    print("Query text:", query_text)
+    q_emb = text_embs[query_idx].reshape(1, -1)
+    img_index = faiss_index_build(image_embs)
+    _, indices = img_index.search(q_emb, k)
+    show_unique_images_with_captions(indices[0], "Text → Image (Top-5, Unique with Captions). Query text: "+query_text)
+    #show_images(indices[0], "Text → Image (Top-5)")
+
+
+def image_to_text(query_idx, k=5):
+    query_text = metadata[query_idx]["caption"]
+    img = Image.open(metadata[query_idx]["image_path"]).convert("RGB")
+    plt.imshow(img)
+    plt.axis("off")
+    plt.title("Query text:" + query_text)
+    plt.show()
+    q_emb = image_embs[query_idx].reshape(1, -1)
+    txt_index = faiss_index_build(text_embs)
+    _, indices = txt_index.search(q_emb, k)
+    print("Top-5 retrieved captions:")
+    for i in indices[0]:
+        print("-", metadata[i]["caption"])
+
+
+def text_to_text(query_idx, k=5):
+    print("Query caption:")
+    print(metadata[query_idx]["caption"])
+    print("\nTop-5 similar captions:")
+
+    q_emb = text_embs[query_idx].reshape(1, -1)
+    txt_index = faiss_index_build(text_embs)
+    _, indices = txt_index.search(q_emb, k + 1)  # +1 to include self
+
+    for idx in indices[0][1:]:  # skip self
+        print("-", metadata[idx]["caption"])
+
+
+def image_to_image(query_idx, k=5):
+    query_text = metadata[query_idx]["caption"]
+    img = Image.open(metadata[query_idx]["image_path"]).convert("RGB")
+    plt.imshow(img)
+    plt.axis("off")
+    plt.title("Query text:" + query_text)
+    plt.show()
+
+    q_emb = image_embs[query_idx].reshape(1, -1)
+    img_index = faiss_index_build(image_embs)
+    _, indices = img_index.search(q_emb, k)
+
+    show_unique_images_with_captions(indices[0], "Image → Image (Top-5, Unique)")
+    # show_images(indices[0], "Image → Image (Top-5)")
+
+
+
 # Example usage
 if __name__ == "__main__":
+    text_to_image(query_idx=0, k=50)
+    image_to_text(query_idx=0, k=5)
+    text_to_text(query_idx=0, k=5)
+    image_to_image(query_idx=0, k=50)
+    
     # build_vocab(
     #     csv_path= CSV_FILE,
     #     output_path= VOCAB_OUTPUT
@@ -328,9 +465,42 @@ if __name__ == "__main__":
     #     repo_type=REPO_TYPE,
     #     local_dir=LOCAL_DOWNLOAD_DIR
     # )
-    generate_flickr30k_clip_embeddings(
-        image_dir=str(IMAGE_DIR),
-        annotation_csv=str(ANNOTATION_CSV),
-        output_dir=str(OUTPUT_DIR),
-        batch_size=64
-    )
+
+    # generate_flickr30k_clip_embeddings(
+    #     image_dir=str(IMAGE_DIR),
+    #     annotation_csv=str(ANNOTATION_CSV),
+    #     output_dir=str(OUTPUT_DIR),
+    #     batch_size=64
+    # )
+
+    # recall_i2i = evaluate_recall_at_k_generic(
+    # query_embs=image_embs,
+    # db_embs=image_embs,
+    # query_ids=image_ids,
+    # db_ids=image_ids,
+    # top_k=1
+    # )
+
+    # recall_i2i = evaluate_recall_at_k_generic(
+    # query_embs=image_embs,
+    # db_embs=image_embs,
+    # query_ids=image_ids,
+    # db_ids=image_ids,
+    # top_k=5
+    # )
+
+    # recall_i2i = evaluate_recall_at_k_generic(
+    # query_embs=image_embs,
+    # db_embs=image_embs,
+    # query_ids=image_ids,
+    # db_ids=image_ids,
+    # top_k=10
+    # )
+
+
+
+
+
+
+
+
