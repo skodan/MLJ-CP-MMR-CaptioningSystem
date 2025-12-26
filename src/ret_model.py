@@ -12,16 +12,21 @@ class ImageEncoder(nn.Module):
         self.backbone = nn.Sequential(*list(resnet.children())[:-1])
         self.fc = nn.Linear(resnet.fc.in_features, output_dim)
 
-
+    # Forward method with gradient flow for fine-tuning
     def forward(self, images):
-        with torch.no_grad():
-            #features = self.backbone(images).squeeze() - Need to know why .squeeze() was removed
-            features = self.backbone(images)
-        
-        features = features.flatten(1) # why flattening here?
+        features = self.backbone(images)
+        features = features.flatten(1)
         embeddings = self.fc(features)
-        #return embeddings # what difference between this and normalized embeddings?
         return F.normalize(embeddings, p=2, dim=1)
+    
+    # This function is commented out to allow gradient flow for fine-tuning
+    # def forward(self, images):
+    #     with torch.no_grad():
+    #         features = self.backbone(images)
+        
+    #     features = features.flatten(1)
+    #     embeddings = self.fc(features)
+    #     return F.normalize(embeddings, p=2, dim=1)
 
 
 class TextEncoder(nn.Module):

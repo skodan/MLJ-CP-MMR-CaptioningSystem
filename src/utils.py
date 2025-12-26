@@ -30,7 +30,7 @@ IMAGE_DIR = PROJECT_ROOT / "data" / "30k-images"
 ANNOTATION_CSV = PROJECT_ROOT / "data" / "annotations_30k.csv"
 CSV_FILE = PROJECT_ROOT / "data" / "captions" / "flickr8k_train.csv"
 
-VOCAB_OUTPUT = PROJECT_ROOT / "data" / "captions" / "vocab.pkl"
+VOCAB_OUTPUT = PROJECT_ROOT / "data" / "processed" / "vocab_8k.pkl"
 OUTPUT_DIR = PROJECT_ROOT / "data" / "embeddings"
 
 IMG_EMB_PATH = PROJECT_ROOT / "data" / "embeddings" / "30k_test" / "30k_hf_image_embeddings.npy"
@@ -43,8 +43,8 @@ REPO_TYPE = "dataset"
 LOCAL_DOWNLOAD_DIR = Path("./data/30k")
 
 # load embeddings and caption counts
-image_embs = np.load(IMG_EMB_PATH)
-text_embs = np.load(TXT_EMB_PATH)
+# image_embs = np.load(IMG_EMB_PATH)
+# text_embs = np.load(TXT_EMB_PATH)
 #cnt = np.load(CAPTION_COUNTS_PATH)
 
 # image ids and text ids for HF 8k Flickr dataset
@@ -55,8 +55,11 @@ text_embs = np.load(TXT_EMB_PATH)
 #     text_ids.extend([img_id] * c)
 
 # image ids and text ids for HF 30k Flickr dataset
-metadata = np.load(META_PATH, allow_pickle=True)
-img_ids = [m["img_id"] for m in metadata]
+# metadata = np.load(META_PATH, allow_pickle=True)
+# img_ids = [m["img_id"] for m in metadata]
+
+# Load models
+
 
 # Function to download the entire dataset snapshot from Hugging Face
 def download_hf_dataset(repo_id, repo_type, local_dir):
@@ -212,14 +215,56 @@ def tokenize(caption):
     return caption.split()
 
 
-def build_vocab_from_hf_dataset(train_ds, caption_field="caption_0"):
+def build_vocab_from_flickr30k_annotations(captions_file,train_split_file,min_freq=2):
+    token_counter = Counter()
+
+    # Read train image filenames
+    with open(train_split_file, "r") as f:
+        train_images = set(line.strip() for line in f)
+
+    # Read captions
+    with open(captions_file, "r", encoding="utf-8") as f:
+        for line in f:
+            img_caption, caption = line.strip().split("\t")
+            img_name = img_caption.split("#")[0]
+
+            if img_name in train_images:
+                tokens = tokenize(caption)
+                token_counter.update(tokens)
+
+    # Apply min_freq
+    tokens = [tok for tok, freq in token_counter.items() if freq >= min_freq]
+
+    special_tokens = ["<pad>", "<sos>", "<eos>", "<unk>"]
+    vocab_tokens = special_tokens + sorted(tokens)
+
+    word2int = {w: i for i, w in enumerate(vocab_tokens)}
+    int2word = {i: w for w, i in word2int.items()}
+
+    vocab = {
+        "word2int": word2int,
+        "int2word": int2word,
+        "specials": special_tokens,
+        "min_freq": min_freq
+    }
+
+    with open(VOCAB_OUTPUT, "wb") as f:
+        pickle.dump(vocab, f)
+
+    print(f"Flickr30k vocab size: {len(word2int)}")
+    return vocab
+
+
+def build_vocab_from_hf_dataset(train_ds, caption_field="caption_0", min_freq=2):
     token_counter = Counter()
     for example in train_ds:
         tokens = tokenize(example[caption_field])
         token_counter.update(tokens)
+    
+    tokens = [token for token, freq in token_counter.items() if freq >= min_freq]
 
     special_tokens = ["<pad>", "<sos>", "<eos>", "<unk>"]
-    unique_tokens = special_tokens + sorted(token_counter.keys())
+    unique_tokens = special_tokens + sorted(tokens)
 
     word2int = {word: idx for idx, word in enumerate(unique_tokens)}
     int2word = {idx: word for word, idx in word2int.items()}
@@ -227,7 +272,8 @@ def build_vocab_from_hf_dataset(train_ds, caption_field="caption_0"):
     vocab = {
         "word2int": word2int,
         "int2word": int2word,
-        "specials": special_tokens
+        "specials": special_tokens,
+        "min_freq": min_freq
     }
 
     with open(VOCAB_OUTPUT, "wb") as f:
@@ -379,17 +425,6 @@ def show_unique_images_with_captions(indices, title, max_images=5, wrap_width=35
     plt.show()
 
 
-# def show_images(indices, title):
-#     plt.figure(figsize=(15, 3))
-#     for i, idx in enumerate(indices):
-#         plt.subplot(1, len(indices), i + 1)
-#         img = Image.open(metadata[idx]["image_path"]).convert("RGB")
-#         plt.imshow(img)
-#         plt.axis("off")
-#     plt.suptitle(title)
-#     plt.show()
-
-
 def text_to_image(query_idx, k=5):
     query_text = metadata[query_idx]["caption"]
     print("Query text:", query_text)
@@ -447,21 +482,26 @@ def image_to_image(query_idx, k=5):
 
 # Example usage
 if __name__ == "__main__":
-    text_to_image(query_idx=0, k=50)
-    image_to_text(query_idx=0, k=5)
-    text_to_text(query_idx=0, k=5)
-    image_to_image(query_idx=0, k=50)
+    # text_to_image(query_idx=0, k=50)
+    # image_to_text(query_idx=0, k=5)
+    # text_to_text(query_idx=0, k=5)
+    # image_to_image(query_idx=0, k=50)
     
     # build_vocab(
     #     csv_path= CSV_FILE,
     #     output_path= VOCAB_OUTPUT
     # )
 
-    # ds = load_dataset("jxie/flickr8k")
-    # vocab = build_vocab_from_hf_dataset(ds["train"])
+    ds = load_dataset("jxie/flickr8k")
+    vocab = build_vocab_from_hf_dataset(ds["train"])
+
+    # ds_30k = load_dataset("nlphuji/flickr30k-parquet")
+
+    # vocab = build_vocab_from_hf_dataset(ds_30k["train"],min_freq=2)
+    # print(vocab)
 
     # download_hf_dataset(
-    #     repo_id=REPO_ID,
+    #     repo_id=REPO_ID,  
     #     repo_type=REPO_TYPE,
     #     local_dir=LOCAL_DOWNLOAD_DIR
     # )
@@ -496,9 +536,6 @@ if __name__ == "__main__":
     # db_ids=image_ids,
     # top_k=10
     # )
-
-
-
 
 
 
