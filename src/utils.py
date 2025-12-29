@@ -10,7 +10,6 @@ from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
 from rouge_score import rouge_scorer
 from jiwer import wer
 from huggingface_hub import snapshot_download
-from pathlib import Path
 import os
 from PIL import Image
 from transformers import CLIPModel, CLIPProcessor
@@ -18,6 +17,8 @@ from tqdm import tqdm
 import ast
 import matplotlib.pyplot as plt
 import textwrap
+from dataloader_hf import Flickr30kImageDataset, Flickr30kEvalDataset, eval_collate_fn
+from torch.utils.data import DataLoader
 
 try:
     import faiss
@@ -75,6 +76,46 @@ def download_hf_dataset(repo_id, repo_type, local_dir):
 
     print(f"\n--- Download Complete ---")
     print(f"Entire dataset snapshot is saved in: {local_path}")
+
+
+def generate_retrieval_embeddings(image_encoder,text_encoder,df,vocab,image_root,device,batch_size=64):
+    image_encoder.eval()
+    text_encoder.eval()
+
+    # -------- IMAGE EMBEDDINGS --------
+    img_ds = Flickr30kImageDataset(df, image_root)
+    img_loader = DataLoader(img_ds, batch_size=batch_size, shuffle=False)
+
+    all_img_embs = []
+    with torch.no_grad():
+        for images in img_loader:
+            images = images.to(device)
+            emb = image_encoder(images)
+            all_img_embs.append(emb.cpu())
+
+    all_img_embs = torch.cat(all_img_embs).numpy()
+
+    # -------- TEXT EMBEDDINGS --------
+    txt_ds = Flickr30kEvalDataset(df, vocab, image_root)
+    txt_loader = DataLoader(
+        txt_ds, batch_size=batch_size,
+        shuffle=False, collate_fn=eval_collate_fn
+    )
+
+    all_txt_embs = []
+    all_txt_ids = []
+
+    with torch.no_grad():
+        for captions, img_ids, lengths in txt_loader:
+            captions = captions.to(device)
+            emb = text_encoder(captions, lengths)
+            all_txt_embs.append(emb.cpu())
+            all_txt_ids.extend(img_ids)
+
+    all_txt_embs = torch.cat(all_txt_embs).numpy()
+    all_txt_ids = np.array(all_txt_ids)
+
+    return all_img_embs, all_txt_embs, all_txt_ids
 
 
 def generate_flickr30k_clip_embeddings(image_dir,annotation_csv,output_dir,batch_size=64):

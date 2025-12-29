@@ -2,21 +2,22 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.models as models
-from torchvision.models import resnet50, ResNet50_Weights
+from torchvision.models import vit_b_16, ViT_B_16_Weights
 
 
 class ImageEncoder(nn.Module):
     def __init__(self, output_dim=512):
-        super(ImageEncoder, self).__init__()
-        resnet = resnet50(weights=ResNet50_Weights.DEFAULT)
-        self.backbone = nn.Sequential(*list(resnet.children())[:-1])
-        self.fc = nn.Linear(resnet.fc.in_features, output_dim)
+        super().__init__()
 
-    # Forward method with gradient flow for fine-tuning
+        vit = vit_b_16(weights=ViT_B_16_Weights.DEFAULT)
+        self.backbone = vit
+        self.backbone.heads = nn.Identity()  # remove classifier
+
+        self.fc = nn.Linear(vit.hidden_dim, output_dim)
+
     def forward(self, images):
-        features = self.backbone(images)
-        features = features.flatten(1)
-        embeddings = self.fc(features)
+        features = self.backbone(images)      # (B, hidden_dim)
+        embeddings = self.fc(features)        # (B, 512)
         return F.normalize(embeddings, p=2, dim=1)
 
 
