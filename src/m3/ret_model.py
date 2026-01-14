@@ -32,11 +32,11 @@ class TextEncoder(nn.Module):
 
     def forward(self, captions, lengths):
         embedded = self.embedding(captions)
-        packed = nn.utils.rnn.pack_padded_sequence(embedded, lengths, batch_first=True, enforce_sorted=False)
-        packed_out,_ = self.lstm(packed)
-        outputs, _ = nn.utils.rnn.pad_packed_sequence(packed_out, batch_first=True)
-        attn_scores = self.attn(outputs).squeeze(-1)
-        attn_weights = torch.softmax(attn_scores, dim=1)
-        context = torch.sum(outputs * attn_weights.unsqueeze(-1), dim=1)
-        embeddings = self.fc(context)
+        packed = nn.utils.rnn.pack_padded_sequence(
+            embedded, lengths, batch_first=True, enforce_sorted=False
+        )
+        _, (h_n, _) = self.lstm(packed)
+
+        sentence_emb = h_n[-1]        # (B, hidden_size)
+        embeddings = self.fc(sentence_emb)
         return F.normalize(embeddings, p=2, dim=1)

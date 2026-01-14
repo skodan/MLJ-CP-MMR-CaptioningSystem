@@ -7,9 +7,9 @@ from collections import Counter
 from datasets import load_dataset
 import torch
 from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
-from rouge_score import rouge_scorer
-from jiwer import wer
-from huggingface_hub import snapshot_download
+# from rouge_score import rouge_scorer
+# from jiwer import wer
+# from huggingface_hub import snapshot_download
 import os
 from PIL import Image
 from transformers import CLIPModel, CLIPProcessor
@@ -17,7 +17,7 @@ from tqdm import tqdm
 import ast
 import matplotlib.pyplot as plt
 import textwrap
-from dataloader_hf import Flickr30kImageDataset, Flickr30kEvalDataset, eval_collate_fn
+from src.dataloader_hf import Flickr30kImageDataset, Flickr30kEvalDataset, eval_collate_fn
 from torch.utils.data import DataLoader
 
 try:
@@ -87,11 +87,38 @@ def generate_retrieval_embeddings(image_encoder,text_encoder,df,vocab,image_root
     img_loader = DataLoader(img_ds, batch_size=batch_size, shuffle=False)
 
     all_img_embs = []
+    all_img_ids = []
+
+    img_counter = 0  # <-- IMPORTANT
+
     with torch.no_grad():
         for images in img_loader:
             images = images.to(device)
-            emb = image_encoder(images)
-            all_img_embs.append(emb.cpu())
+
+            out = image_encoder(images)
+            img_emb = out[0] if isinstance(out, tuple) else out
+
+            all_img_embs.append(img_emb.cpu())
+
+            # Correct image ids
+            bsz = images.size(0)
+            all_img_ids.extend(range(img_counter, img_counter + bsz))
+            img_counter += bsz
+
+    # with torch.no_grad():
+    #     for images in img_loader:
+    #         images = images.to(device)
+    #         out = image_encoder(images)
+
+    #         # Handle both normal and DataParallel outputs
+    #         if isinstance(out, tuple):
+    #             img_emb = out[0]
+    #         else:
+    #             img_emb = out
+
+    #         all_img_embs.append(img_emb.cpu())
+            # emb = image_encoder(images)
+            # all_img_embs.append(emb.cpu())
 
     all_img_embs = torch.cat(all_img_embs).numpy()
 
@@ -115,7 +142,7 @@ def generate_retrieval_embeddings(image_encoder,text_encoder,df,vocab,image_root
     all_txt_embs = torch.cat(all_txt_embs).numpy()
     all_txt_ids = np.array(all_txt_ids)
 
-    return all_img_embs, all_txt_embs, all_txt_ids
+    return all_img_embs, all_txt_embs, all_txt_ids, np.array(all_img_ids)
 
 
 def generate_flickr30k_clip_embeddings(image_dir,annotation_csv,output_dir,batch_size=64):
@@ -519,6 +546,58 @@ def image_to_image(query_idx, k=5):
     show_unique_images_with_captions(indices[0], "Image → Image (Top-5, Unique)")
     # show_images(indices[0], "Image → Image (Top-5)")
 
+
+def generate_retrieval_embeddings_kaggle(image_encoder, text_encoder, df, vocab, image_root, device, batch_size=128, save_dir=None, split_name="test"):
+    from dataloader_hf import Flickr30kDataset, collate_fn
+
+    dataset = Flickr30kDataset(
+        df=df,
+        vocab=vocab,
+        image_root=image_root
+    )
+
+    loader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=2,
+        collate_fn=collate_fn
+    )
+
+    image_encoder.eval()
+    text_encoder.eval()
+
+    all_img_embs = []
+    all_txt_embs = []
+    all_txt_ids = []
+
+    with torch.no_grad():
+        for images, captions, img_ids, lengths in loader:
+            images = images.to(device)
+            captions = captions.to(device)
+
+            img_emb = image_encoder(images)
+            txt_emb = text_encoder(captions, lengths)
+
+            all_img_embs.append(img_emb.cpu())
+            all_txt_embs.append(txt_emb.cpu())
+            all_txt_ids.extend(img_ids)
+
+    image_embs = torch.cat(all_img_embs, dim=0).numpy()
+    text_embs = torch.cat(all_txt_embs, dim=0).numpy()
+    text_ids = np.array(all_txt_ids)
+
+    # ---------------- SAVE ----------------
+    if save_dir is not None:
+        os.makedirs(save_dir, exist_ok=True)
+
+        np.save(os.path.join(save_dir, f"{split_name}_image_embeddings.npy"), image_embs)
+        np.save(os.path.join(save_dir, f"{split_name}_text_embeddings.npy"), text_embs)
+        np.save(os.path.join(save_dir, f"{split_name}_text_ids.npy"), text_ids)
+
+        print(f"Saved embeddings to: {save_dir}")
+
+    return image_embs, text_embs, text_ids
 
 
 # Example usage

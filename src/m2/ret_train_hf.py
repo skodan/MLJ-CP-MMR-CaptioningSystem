@@ -27,6 +27,37 @@ def contrastive_loss(im_emb, tex_emb, temperature=0.07):
     return (loss_i + loss_t) / 2
 
 
+def init_m2_model_and_optimizer(vocab_size, device, lr=1e-4):
+    # ---- Create models ----
+    image_encoder = ImageEncoder().to(device)
+    text_encoder = TextEncoder(vocab_size=vocab_size).to(device)
+
+    # ---- Freeze entire ResNet backbone ----
+    for param in image_encoder.backbone.parameters():
+        param.requires_grad = False
+
+    # ---- Unfreeze last 2–3 ResNet layers (layer2, layer3, layer4) ----
+    for param in image_encoder.backbone[-3:].parameters():
+        param.requires_grad = True
+
+    # ---- Always train projection head ----
+    for param in image_encoder.fc.parameters():
+        param.requires_grad = True
+
+    # ---- Optimizer: ONLY trainable parameters ----
+    optimizer = torch.optim.Adam(
+        filter(
+            lambda p: p.requires_grad,
+            list(image_encoder.parameters()) +
+            list(text_encoder.parameters())
+        ),
+        lr=lr
+    )
+
+    return image_encoder, text_encoder, optimizer
+
+
+
 def init_m2_m3_m4_model_and_optimizer(vocab_size, device, lr=1e-4):
     image_encoder = ImageEncoder().to(device)
     text_encoder = TextEncoder(vocab_size=vocab_size).to(device)
@@ -38,31 +69,6 @@ def init_m2_m3_m4_model_and_optimizer(vocab_size, device, lr=1e-4):
     )
 
     return image_encoder, text_encoder, optimizer
-
-
-# def init_m1_model_and_optimizer(vocab_size, device, lr=1e-4):
-#     image_encoder = ImageEncoder().to(device)
-
-#     text_encoder = TextEncoder(vocab_size=vocab_size).to(device)
-
-#     for param in image_encoder.backbone.parameters():
-#         param.requires_grad = False
-
-#     for param in image_encoder.backbone[-1].parameters():
-#         param.requires_grad = True
-
-#     for param in text_encoder.embedding.parameters():
-#         param.requires_grad = False
-
-#     optimizer = torch.optim.Adam(
-#         filter(
-#             lambda p: p.requires_grad,
-#             list(image_encoder.parameters()) + list(text_encoder.parameters())
-#         ),
-#         lr=lr
-#     )
-
-#     return image_encoder, text_encoder, optimizer
 
 
 def run_epoch(loader, image_encoder, text_encoder, optimizer=None, device=device):

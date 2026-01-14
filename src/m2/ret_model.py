@@ -1,9 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torchvision.models as models
-from torchvision.models import resnet50, ResNet50_Weights
-
+from torchvision.models import resnet50
+from torchvision.models import ResNet50_Weights
 
 class ImageEncoder(nn.Module):
     def __init__(self, output_dim=512):
