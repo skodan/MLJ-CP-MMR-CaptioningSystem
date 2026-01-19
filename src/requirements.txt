@@ -1,0 +1,12 @@
+transformers
+pycocoevalcap
+nltk
+Pillow
+scikit-image
+matplotlib
+fastapi
+uvicorn
+streamlit
+torch
+torchvision
+faiss-cpu

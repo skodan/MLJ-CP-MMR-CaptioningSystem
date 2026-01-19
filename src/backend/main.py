@@ -65,7 +65,7 @@ def load_models():
         preprocess_cfg = json.load(f)
 
     clip_model = load_clip_model(
-        model_path=os.path.join(MODEL_DIR, "flickr8k_retrieval_model_final.pth"),
+        model_path=os.path.join(MODEL_DIR, "flickr8k_retrieval_model.pth"),
         vocab=caption_bundle["vocab"],
         device=DEVICE
     )
@@ -136,6 +136,34 @@ async def image_to_text(file: UploadFile = File(...)):
     captions = retrieval_service.image_to_text(image)
     return captions
 
+
+@app.post("/search/img2img", response_model=List[ImageResult])
+async def image_to_image(file: UploadFile = File(...)):
+    """
+    Image → Image (retrieve similar images)
+    """
+    image = Image.open(file.file).convert("RGB")
+    
+    # Preprocess and encode the uploaded image
+    image_tensor = retrieval_service.image_transform(image).unsqueeze(0).to(DEVICE)
+    
+    with torch.no_grad():
+        emb = retrieval_service.clip_model.encode_image(image_tensor).cpu().numpy()
+    
+    emb = retrieval_service._normalize(emb)
+    
+    # Search in image embeddings index
+    scores, idxs = retrieval_service.image_index.search(emb, 5)
+    
+    results = [
+        {
+            "image_path": str(retrieval_service.image_id_map[i]),  # as string
+            "score": float(scores[0][j])
+        }
+        for j, i in enumerate(idxs[0])
+    ]
+    
+    return results
 
 @app.get("/health")
 def health_check():

@@ -53,8 +53,8 @@ def load_clip_model(model_path: str, vocab: dict, device: torch.device = torch.d
         vocab_size=checkpoint["vocab_size"]
     ).to(device)
 
-    image_encoder.load_state_dict(checkpoint["image_encoder"])
-    text_encoder.load_state_dict(checkpoint["text_encoder"])
+    image_encoder.load_state_dict(checkpoint["image_encoder_state_dict"])
+    text_encoder.load_state_dict(checkpoint["text_encoder_state_dict"])
 
     image_encoder.eval()
     text_encoder.eval()
